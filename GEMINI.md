@@ -11,7 +11,7 @@
 # 认证授权
 ## spring-security-oauth2-authorization-server：认证授权服务器核心
 1. 负责所有复杂的、通用的、与业务无关的 “安全流程控制”，使用 Spring Security 6.x 实现。
-2. 完全遵循 OAuth 2.1 和 OIDC 1.0 标准，管理客户端和服务，为它们颁发不同权限（Scopes）的 Token。
+2. 完全遵循 OAuth 2.1 ， OIDC 1.0 ， JSON Web Tokens，SAML，LDAP标准，管理客户端和服务，为它们颁发不同权限（Scopes）的 Token。
 3. 支持验证码，短信等多因子认证，支持微信，支付宝等多平台登录。
 
 ### 开发计划
