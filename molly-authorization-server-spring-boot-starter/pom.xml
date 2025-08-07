@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>cn.molly</groupId>
+        <artifactId>molly</artifactId>
+        <version>${revision}</version>
+    </parent>
+
+    <groupId>cn.molly.security.auth</groupId>
+    <artifactId>molly-authorization-server-spring-boot-starter</artifactId>
+
+    <dependencies>
+        <!-- 核心依赖，提供 OAuth2 协议实现 -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-oauth2-authorization-server</artifactId>
+        </dependency>
+        <!-- 引入自动配置能力 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+        <!-- 配置文件处理器，为自定义配置提供 IDE 提示 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <!-- OAuth2 核心包，提供令牌定制等能力 -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-oauth2-core</artifactId>
+        </dependency>
+        <!-- Spring Security 配置支持 -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-config</artifactId>
+        </dependency>
+        <!-- 引入项目内部基础模块 -->
+        <dependency>
+            <groupId>cn.molly.infrastructure</groupId>
+            <artifactId>molly-infrastructure</artifactId>
+        </dependency>
+    </dependencies>
+
+</project>
