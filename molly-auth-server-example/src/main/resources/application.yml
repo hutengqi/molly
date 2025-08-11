@@ -1,0 +1,11 @@
+# 服务器端口
+server:
+  port: 9000
+
+# Molly 认证服务器配置
+molly:
+  auth:
+    server:
+      # 令牌签发者地址，必须与当前服务地址匹配
+      # 这是 OIDC 的标准要求，客户端会用它来验证令牌的来源
+      issuer-uri: http://localhost:9000

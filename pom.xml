@@ -11,6 +11,7 @@
     <modules>
         <module>molly-infrastructure</module>
         <module>molly-authorization-server-spring-boot-starter</module>
+        <module>molly-auth-server-example</module>
     </modules>
 
     <properties>
@@ -18,7 +19,7 @@
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <revision>0.1.0-SNAPSHOT</revision>
-        <spring.version>3.5.4</spring.version>
+        <spring.version>3.3.2</spring.version>
         <collections.version>4.4</collections.version>
     </properties>
 
@@ -30,11 +31,6 @@
                 <version>${spring.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
-            </dependency>
-            <dependency>
-                <groupId>cn.molly.infrastructure</groupId>
-                <artifactId>molly-infrastructure</artifactId>
-                <version>${revision}</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.commons</groupId>
@@ -52,4 +48,34 @@
             <scope>provided</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>flatten-maven-plugin</artifactId>
+                <version>1.6.0</version>
+                <configuration>
+                    <updatePomFile>true</updatePomFile>
+                    <flattenMode>resolveCiFriendliesOnly</flattenMode>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>flatten</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>flatten</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>flatten.clean</id>
+                        <phase>clean</phase>
+                        <goals>
+                            <goal>clean</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

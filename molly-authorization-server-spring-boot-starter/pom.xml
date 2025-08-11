@@ -7,9 +7,10 @@
         <groupId>cn.molly</groupId>
         <artifactId>molly</artifactId>
         <version>${revision}</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <groupId>cn.molly.security.auth</groupId>
+    <groupId>cn.molly.auth</groupId>
     <artifactId>molly-authorization-server-spring-boot-starter</artifactId>
 
     <dependencies>
@@ -43,6 +44,7 @@
         <dependency>
             <groupId>cn.molly.infrastructure</groupId>
             <artifactId>molly-infrastructure</artifactId>
+            <version>${project.version}</version>
         </dependency>
     </dependencies>
 
