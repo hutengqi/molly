@@ -157,27 +157,32 @@ public class SecurityConfig {
 
     // OAuth2 客户端存储
     @Bean
-    public RegisteredClientRepository registeredClientRepository(PasswordEncoder encoder) {
+    public RegisteredClientRepository registeredClientRepository(PasswordEncoder passwordEncoder) {
         RegisteredClient client = RegisteredClient.withId(UUID.randomUUID().toString())
-                .clientId("my-client")
-                .clientSecret(encoder.encode("my-secret"))
+                .clientId("test-client")
+                .clientSecret(passwordEncoder.encode("secret"))
                 .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                 .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
                 .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
                 .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
-                .redirectUri("http://127.0.0.1:8080/callback")
+                .redirectUri("http://127.0.0.1:8080/login/oauth2/code/messaging-client-oidc")
                 .scope(OidcScopes.OPENID)
                 .scope(OidcScopes.PROFILE)
+                .clientSettings(ClientSettings.builder().requireAuthorizationConsent(true).build())
+                .tokenSettings(TokenSettings.builder()
+                        .accessTokenTimeToLive(Duration.ofMinutes(30))
+                        .refreshTokenTimeToLive(Duration.ofDays(7))
+                        .build())
                 .build();
         return new InMemoryRegisteredClientRepository(client);
     }
 
     // 用户认证服务
     @Bean
-    public UserDetailsService userDetailsService(PasswordEncoder encoder) {
-        UserDetails user = User.withUsername("admin")
-                .password(encoder.encode("admin"))
-                .roles("ADMIN")
+    public UserDetailsService userDetailsService(PasswordEncoder passwordEncoder) {
+        UserDetails user = User.withUsername("user")
+                .password(passwordEncoder.encode("password"))
+                .roles("USER")
                 .build();
         return new InMemoryUserDetailsManager(user);
     }
@@ -201,7 +206,7 @@ curl http://localhost:9000/.well-known/openid-configuration
 curl http://localhost:9000/oauth2/jwks
 
 # 客户端凭证模式获取令牌
-curl -X POST -u my-client:my-secret \
+curl -X POST -u test-client:secret \
   http://localhost:9000/oauth2/token \
   -d "grant_type=client_credentials&scope=openid"
 ```
