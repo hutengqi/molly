@@ -6,10 +6,10 @@ import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration;
@@ -32,15 +32,16 @@ import java.util.stream.Collectors;
  * Spring Authorization Server 所需的默认配置和核心组件。
  * <p>
  * 主要职责包括：
- * 1. 引入 Spring Authorization Server 的基础配置 ({@code OAuth2AuthorizationServerConfiguration})。
- * 2. 启用并绑定自定义的配置属性 ({@link MollyAuthServerProperties})。
- * 3. 提供可被使用者覆盖的默认 Bean，例如：
+ * 1. 启用并绑定自定义的配置属性 ({@link MollyAuthServerProperties})。
+ * 2. 提供可被使用者覆盖的默认 Bean，例如：
  * - {@link AuthorizationServerSettings}: 定义服务器的元数据。
  * - {@link JWKSource}: 提供 JWT 签名的密钥。
  * - {@link OAuth2TokenCustomizer}: 自定义令牌内容。
  * <p>
- * 使用者只需要在项目中引入此 starter，并提供 {@code UserDetailsService} 和 {@code RegisteredClientRepository} 的实现，
- * 即可快速搭建一个功能完备的 OAuth2 认证服务器。
+ * 使用者需要在项目中引入此 starter，并提供以下 Bean：
+ * - {@code RegisteredClientRepository}: 用于 OAuth2 客户端管理。
+ * - {@code UserDetailsService}: 用于用户认证。
+ * 同时需要配置授权服务器的 {@link org.springframework.security.web.SecurityFilterChain}（可参考示例项目）。
  *
  * @author Ht7_Sincerity
  * @see org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
@@ -49,7 +50,7 @@ import java.util.stream.Collectors;
  */
 @AutoConfiguration
 @EnableConfigurationProperties(MollyAuthServerProperties.class)
-@Import(OAuth2AuthorizationServerConfiguration.class)
+@ConditionalOnClass(OAuth2AuthorizationServerConfiguration.class)
 public class MollyAuthServerAutoConfiguration {
 
     /**
