@@ -1,0 +1,2 @@
+cn.molly.cache.config.MollyCacheAutoConfiguration
+cn.molly.cache.config.MollyCacheAopAutoConfiguration

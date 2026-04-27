@@ -11,6 +11,7 @@
     <module>molly-authorization-server-spring-boot-starter</module>
     <module>molly-auth-server-example</module>
     <module>molly-oss-spring-boot-starter</module>
+    <module>molly-cache-spring-boot-starter</module>
   </modules>
   <properties>
     <minio.version>8.5.17</minio.version>
@@ -19,6 +20,7 @@
     <maven.compiler.source>21</maven.compiler.source>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <spring.version>3.3.2</spring.version>
+    <redisson.version>3.36.0</redisson.version>
     <aliyun-oss.version>3.18.5</aliyun-oss.version>
     <revision>0.1.0-SNAPSHOT</revision>
   </properties>
@@ -45,6 +47,16 @@
         <groupId>io.minio</groupId>
         <artifactId>minio</artifactId>
         <version>${minio.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.redisson</groupId>
+        <artifactId>redisson</artifactId>
+        <version>${redisson.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.redisson</groupId>
+        <artifactId>redisson-spring-boot-starter</artifactId>
+        <version>${redisson.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>

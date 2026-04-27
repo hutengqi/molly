@@ -35,6 +35,15 @@ molly/                                              # 父 POM (cn.molly)
 │       ├── support/minio/                      # MinIO 实现
 │       ├── endpoint/                           # HTTP 端点
 │       └── util/                               # 文件工具
+├── molly-cache-spring-boot-starter/            # 声明式缓存 Starter
+│   └── cn.molly.cache
+│       ├── annotation/                         # 自研缓存注解
+│       ├── aop/                                # 切面与 SpEL 上下文
+│       ├── config/                             # 自动配置
+│       ├── core/                               # SPI 与门面抽象
+│       ├── properties/                         # 配置属性: molly.cache.*
+│       ├── support/redis/                      # Redisson 默认实现
+│       └── sync/                               # 事务后置失效同步器
 └── molly-auth-server-example/                      # 示例认证服务器应用
     └── cn.molly.example.auth
         ├── AuthServerApplication                   # Spring Boot 主类 (端口 9000)
@@ -394,6 +403,226 @@ curl -O http://localhost:8080/oss/download/2026/04/23/uuid.png
 
 ---
 
+## molly-cache-spring-boot-starter
+
+### 用途
+
+为 Spring Boot 应用提供 **基于自研注解 + SpEL 的声明式缓存能力**，默认采用 Redis（Redisson 客户端）作为底层实现，并借助 Redisson 的 `RBatch` / `RMap` / `RLock` 保障复合操作的原子性。一次依赖引入即可满足以下四类缓存场景：
+
+| 场景 | 代表注解 | 底层结构 |
+|------|----------|----------|
+| 单 key 读写失效 | `@MollyCacheable` / `@MollyCachePut` / `@MollyCacheEvict` | String（`RBucket`） |
+| 多 key 批量读写失效 | `@MollyMultiCacheable` / `@MollyMultiCacheEvict` | `RBatch` + 多 `RBucket` |
+| 单 key 单 / 多 subkey | `@MollyHashCacheable` / `@MollyHashCachePut` / `@MollyHashCacheEvict` | `RMap`（Hash） |
+| 组合与分布式锁 | `@MollyCaching` / `@MollyCacheLock` | 聚合执行 / `RLock` |
+
+内建三类高频生产防护：
+
+- **缓存穿透**：回源为 `null` 时写入 `NullValue` 占位，短 TTL 自动清除
+- **缓存击穿**：`lock = true` 时基于 Redisson 分布式锁 + 双检锁单飞回源
+- **缓存雪崩**：全局 TTL 叠加 `ttl-jitter` 随机抖动，打散同时过期时刻
+
+同时与 Spring 事务深度集成：失效/更新类注解默认 `afterCommit = true`，挂入 `TransactionSynchronization` 的提交后阶段执行，回滚不会误删缓存；无事务时自动降级为同步执行。
+
+### 设计思路
+
+#### 1. 自研注解体系，脱离 Spring Cache 抽象
+
+Spring Cache 的 `@Cacheable` 难以表达多 key、Hash subkey 等复合语义。Molly 选择完全自研注解集 + 独立切面，所有注解统一支持 `name` / `key`（SpEL）/ `condition` / `unless` / `ttl` / `cacheNull` / `lock` / `afterCommit` 等字段，语义与扩展点一致。
+
+#### 2. SPI 驱动 — 可替换底层存储
+
+核心抽象 `CacheOperations` 定义所有底层操作，默认提供 `RedissonCacheOperations` 实现。使用方可自行实现该 SPI 接入 Memcached / Tair 等其它存储；使用方也可直接提供自己的 `RedissonClient` Bean 完全接管连接配置。
+
+#### 3. 事务感知的失效策略
+
+`TransactionAwareCacheFlusher` 基于 `TransactionSynchronizationManager`：活动事务中将失效动作挂到 `afterCommit`，避免事务回滚造成缓存与 DB 不一致；无事务时立即执行。该策略对注解与编程式 `CacheTemplate` 统一生效。
+
+#### 4. 与 ORM 解耦
+
+模块本身零 ORM 依赖，推荐在 `@Transactional` 的 application service 层使用注解或 `CacheTemplate`，不侵入 MyBatis / JPA 等 Repository 层；ORM 写操作在事务提交后由切面自动触发对应失效。
+
+#### 5. 统一 SpEL 求值上下文
+
+所有表达式通过 `SpelEvaluator` + `MethodBasedEvaluationContext` 求值，支持 `#argName` / `#root.method` / `#root.args` / `#result`（写回/失效阶段可用）；批量注解的 `idExtractor` 在集合单元素上下文中求值（如 `#this.id`），用于拆分返回集合回填每条缓存。
+
+### 文件说明
+
+| 文件 | 说明 |
+|------|------|
+| `config/MollyCacheAutoConfiguration` | 主自动配置，按 `provider` 注册 `RedissonClient`、`CacheOperations`、`CacheTemplate`、`TransactionAwareCacheFlusher` 等核心 Bean |
+| `config/MollyCacheAopAutoConfiguration` | 切面自动配置，启用 `@EnableAspectJAutoProxy(proxyTargetClass = true)` 并注册主切面与锁切面 |
+| `properties/MollyCacheProperties` | 配置属性类，前缀 `molly.cache`，含 `NullValue` / `Lock` / `Redisson` 三个内嵌配置 |
+| `annotation/MollyCacheable` | 单 key Cache-Aside 读注解，支持 `condition` / `unless` / `cacheNull` / `lock` |
+| `annotation/MollyCachePut` | 单 key 写回注解，始终将方法返回值写入缓存 |
+| `annotation/MollyCacheEvict` | 单 key 失效注解，支持 `allEntries` 整命名空间清空与 `beforeInvocation` |
+| `annotation/MollyMultiCacheable` | 多 key 批量读注解，`RBatch` 命中分片 + `idExtractor` 拆分回填 |
+| `annotation/MollyMultiCacheEvict` | 多 key 批量失效注解 |
+| `annotation/MollyHashCacheable` | Hash 读注解，支持单 subkey / 多 subkey / 整表三种模式 |
+| `annotation/MollyHashCachePut` | Hash 写注解，支持 `field` / `fields` / 整表写入 |
+| `annotation/MollyHashCacheEvict` | Hash 失效注解，支持 `field` / `fields` / `allFields` 三种模式 |
+| `annotation/MollyCaching` | 组合注解，可在同方法上声明多个写/失效注解，统一原子调度 |
+| `annotation/MollyCacheLock` | 分布式互斥锁注解，基于 Redisson `RLock` 实现 |
+| `aop/MollyCacheAspect` | 主切面，统一调度：前置 evict → 读类注解 → proceed → 后置 put / evict / @MollyCaching |
+| `aop/MollyCacheLockAspect` | 独立的分布式锁切面，`@Order` 高于事务切面，避免锁持有时间被事务扩展 |
+| `aop/CacheOperationContext` | 切面共享上下文，封装方法反射信息、参数、返回值与 SpEL 求值入口 |
+| `core/CacheOperations` | 底层缓存 SPI，定义单 key / 批量 / Hash / 锁 / pattern 删除等操作 |
+| `core/CacheTemplate` | 编程式缓存门面，负责 key 拼接、TTL 抖动、`NullValue` 透传与事务后置失效封装 |
+| `core/CacheKeyGenerator` | Key 拼接器，统一 `keyPrefix + name + separator + key` 规则 |
+| `core/SpelEvaluator` | SpEL 求值器，表达式解析结果按字符串缓存，支持 `#this` 根对象求值 |
+| `core/NullValue` | 空值占位符（防穿透），命中占位时对外透明返回 `null` |
+| `core/CacheException` | 缓存层统一运行时异常 |
+| `support/redis/RedissonCacheOperations` | `CacheOperations` 的默认 Redisson 实现，RBucket / RMap / RBatch / RLock 全量适配 |
+| `sync/TransactionAwareCacheFlusher` | 事务感知的动作执行器，活动事务中挂入 `afterCommit`，否则立即执行 |
+| `AutoConfiguration.imports` | Spring Boot 3.x 自动配置注册文件，声明上述两个自动配置类 |
+
+### 配置属性
+
+| 属性 | 说明 | 默认值 |
+|------|------|--------|
+| `molly.cache.provider` | 缓存提供商，当前支持 `redis` | `redis` |
+| `molly.cache.key-prefix` | 全局 key 前缀 | `molly:` |
+| `molly.cache.separator` | 命名空间与 key 的分隔符 | `:` |
+| `molly.cache.default-ttl` | 注解未显式声明 TTL 时的默认值 | `PT30M` |
+| `molly.cache.ttl-jitter` | TTL 抖动系数（0~1），防雪崩，0 关闭 | `0.1` |
+| `molly.cache.after-commit` | 失效/更新类注解默认是否事务后置 | `true` |
+| `molly.cache.null-value.enabled` | 是否启用空值占位（防穿透） | `true` |
+| `molly.cache.null-value.ttl` | 空值占位 TTL | `PT1M` |
+| `molly.cache.lock.enabled` | 是否启用分布式锁能力 | `true` |
+| `molly.cache.lock.wait-time` | 锁最大等待时间 | `PT3S` |
+| `molly.cache.lock.lease-time` | 锁自动释放时间（租期） | `PT10S` |
+| `molly.cache.redisson.address` | Redis 连接地址 | `redis://127.0.0.1:6379` |
+| `molly.cache.redisson.database` | 数据库索引 | `0` |
+| `molly.cache.redisson.password` | 认证密码 | - |
+| `molly.cache.redisson.connection-minimum-idle-size` | 连接池最小空闲连接数 | `8` |
+| `molly.cache.redisson.connection-pool-size` | 连接池最大连接数 | `32` |
+
+> 若需要 Sentinel / Cluster 等高级拓扑，请自行提供 `RedissonClient` Bean 覆盖默认配置。
+
+### 使用方法
+
+#### 1. 添加依赖
+
+```xml
+<dependency>
+    <groupId>cn.molly.cache</groupId>
+    <artifactId>molly-cache-spring-boot-starter</artifactId>
+    <version>${revision}</version>
+</dependency>
+
+<!-- Redisson 为 optional 依赖，需要使用方显式引入 -->
+<dependency>
+    <groupId>org.redisson</groupId>
+    <artifactId>redisson</artifactId>
+</dependency>
+```
+
+> 编译时建议开启 `-parameters`（`maven-compiler-plugin` 的 `<parameters>true</parameters>`），否则 SpEL 无法通过参数名引用。
+
+#### 2. 配置 `application.yml`
+
+```yaml
+molly:
+  cache:
+    key-prefix: "app:"
+    default-ttl: PT30M
+    ttl-jitter: 0.1
+    null-value:
+      enabled: true
+      ttl: PT1M
+    lock:
+      enabled: true
+      wait-time: PT3S
+      lease-time: PT10S
+    redisson:
+      address: redis://127.0.0.1:6379
+      database: 0
+      password:
+```
+
+#### 3. 注解式使用
+
+```java
+@Service
+public class UserService {
+
+    // 单 key 读：命中直接返回，未命中回源并写入；自动防穿透 + 锁单飞
+    @MollyCacheable(name = "user", key = "#id", ttl = "PT30M", lock = true)
+    public User findById(Long id) {
+        return userRepository.selectById(id);
+    }
+
+    // 多 key 批量读：命中分片，未命中回源后按 idExtractor 拆分回填
+    @MollyMultiCacheable(name = "user", keys = "#ids", idExtractor = "#this.id")
+    public List<User> findByIds(Collection<Long> ids) {
+        return userRepository.selectBatchIds(ids);
+    }
+
+    // Hash 单 subkey 写：user:{userId} 下的 profile 字段
+    @MollyHashCachePut(name = "user", key = "#user.id", field = "'profile'")
+    public User updateProfile(User user) {
+        userRepository.updateById(user);
+        return user;
+    }
+
+    // 组合：事务提交后同时失效单 key 与 Hash，回滚则不失效
+    @Transactional
+    @MollyCaching(
+        evict = @MollyCacheEvict(name = "user", key = "#id"),
+        hashEvict = @MollyHashCacheEvict(name = "user", key = "#id", allFields = true)
+    )
+    public void delete(Long id) {
+        userRepository.deleteById(id);
+    }
+
+    // 分布式互斥锁，用于并发防抖 / 幂等
+    @MollyCacheLock(name = "order-submit", key = "#userId", waitTime = "PT1S", leaseTime = "PT5S")
+    public void submitOrder(Long userId, Order order) {
+        // ...
+    }
+}
+```
+
+#### 4. 编程式使用（`CacheTemplate`）
+
+```java
+@Service
+public class ReportService {
+
+    private final CacheTemplate cache;
+
+    public ReportService(CacheTemplate cache) {
+        this.cache = cache;
+    }
+
+    public Report load(Long id) {
+        // 读取：命中 NullValue 占位时自动还原为 null
+        Object hit = cache.get("report", id);
+        if (hit != null) {
+            return (Report) hit;
+        }
+        Report report = queryFromDb(id);
+        cache.put("report", id, report, Duration.ofMinutes(10));
+        return report;
+    }
+
+    @Transactional
+    public void invalidate(Long id) {
+        // 事务提交后失效，回滚不执行
+        cache.evictAfterCommit("report", id);
+    }
+}
+```
+
+#### 5. 扩展与覆盖
+
+- **接管 RedissonClient**：声明自己的 `RedissonClient` Bean，自动覆盖 starter 默认实现，适用于 Sentinel / Cluster 场景
+- **接管底层存储**：实现 `CacheOperations` 接口并声明为 Bean，即可替换默认 Redisson 实现
+- **覆盖 Key 生成规则**：提供自定义 `CacheKeyGenerator` Bean
+- **覆盖 SpEL 求值器**：提供自定义 `SpelEvaluator` Bean
+
+---
+
 ## 构建与运行
 
 ```bash
@@ -406,6 +635,7 @@ mvn clean install -DskipTests
 # 构建指定模块
 mvn clean install -pl molly-authorization-server-spring-boot-starter -am
 mvn clean install -pl molly-oss-spring-boot-starter -am
+mvn clean install -pl molly-cache-spring-boot-starter -am
 
 # 运行示例认证服务器
 mvn spring-boot:run -pl molly-auth-server-example
