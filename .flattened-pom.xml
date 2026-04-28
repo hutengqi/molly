@@ -8,8 +8,10 @@
   <packaging>pom</packaging>
   <modules>
     <module>molly-infrastructure</module>
-    <module>molly-authorization-server-spring-boot-starter</module>
+    <module>molly-authorization-spring-boot-starter</module>
+    <module>molly-auth-server-spring-boot-starter</module>
     <module>molly-auth-server-example</module>
+    <module>molly-resource-server-example</module>
     <module>molly-oss-spring-boot-starter</module>
     <module>molly-cache-spring-boot-starter</module>
   </modules>

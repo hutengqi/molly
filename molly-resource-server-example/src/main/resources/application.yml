@@ -1,0 +1,20 @@
+# 资源服务器示例端口
+server:
+  port: 9100
+
+# Molly 授权鉴权组件配置
+molly:
+  security:
+    authorization:
+      # 与 molly-auth-server-example (9000) 对齐
+      issuer-uri: http://localhost:9000
+      # 公共接口放行
+      permit-all:
+        - /actuator/**
+      rbac:
+        enabled: true
+        # 需要启用动态 URL 鉴权时设为 true
+        dynamic-url:
+          enabled: false
+        cache:
+          ttl: 5m

@@ -18,7 +18,7 @@ Molly 是一个面向分布式 Web 系统的通用脚手架项目，基于 Sprin
 molly/                                          # Parent POM (groupId: cn.molly)
 ├── molly-infrastructure/                       # Base utilities and common models
 │   └── (groupId: cn.molly.infrastructure)
-├── molly-authorization-server-spring-boot-starter/  # OAuth2 Authorization Server Starter
+├── molly-auth-server-spring-boot-starter/            # OAuth2 Authorization Server Starter
 │   └── cn.molly.security.auth
 │       ├── config/
 │       │   └── MollyAuthServerAutoConfiguration  # Core auto-configuration
@@ -42,7 +42,7 @@ molly/                                          # Parent POM (groupId: cn.molly)
 ./mvnw clean install -DskipTests
 
 # Build a specific module
-./mvnw clean install -pl molly-authorization-server-spring-boot-starter -am
+./mvnw clean install -pl molly-auth-server-spring-boot-starter -am
 
 # Run the example auth server
 ./mvnw spring-boot:run -pl molly-auth-server-example
@@ -58,7 +58,7 @@ Application config prefix: `molly.security.auth`
 
 ## Architecture & Design Principles
 
-1. **Starter Pattern**: `molly-authorization-server-spring-boot-starter` provides auto-configuration with `@ConditionalOnMissingBean` defaults, allowing consumers to override any bean.
+1. **Starter Pattern**: `molly-auth-server-spring-boot-starter` provides auto-configuration with `@ConditionalOnMissingBean` defaults, allowing consumers to override any bean.
 2. **SPI-Driven**: The starter does NOT handle data persistence. Consumers MUST provide:
    - `RegisteredClientRepository` - for OAuth2 client management
    - `UserDetailsService` (or `MollyUserAccountService`) - for user authentication

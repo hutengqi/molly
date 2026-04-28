@@ -28,7 +28,7 @@ import java.util.stream.Collectors;
 /**
  * Molly 认证授权服务器的自动配置类。
  * <p>
- * 该类是 `molly-authorization-server-spring-boot-starter` 的核心，负责为 Spring Boot 应用提供
+ * 该类是 `molly-auth-server-spring-boot-starter` 的核心，负责为 Spring Boot 应用提供
  * Spring Authorization Server 所需的默认配置和核心组件。
  * <p>
  * 主要职责包括：

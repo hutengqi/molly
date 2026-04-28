@@ -1,0 +1,4 @@
+cn.molly.security.authorization.config.MollyAuthorizationAutoConfiguration
+cn.molly.security.authorization.config.MollyResourceServerConfiguration
+cn.molly.security.authorization.config.MollyRbacConfiguration
+cn.molly.security.authorization.config.MollyAuthorizationExceptionConfiguration

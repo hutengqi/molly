@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>cn.molly</groupId>
+        <artifactId>molly</artifactId>
+        <version>${revision}</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <groupId>cn.molly.authorization</groupId>
+    <artifactId>molly-authorization-spring-boot-starter</artifactId>
+
+    <dependencies>
+        <!-- 资源服务器核心：JWT 解码、Bearer Token 过滤器等 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+        </dependency>
+        <!-- Spring Security 核心 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <!-- AOP 支持：@MollyPreAuthorize 注解织入 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+        <!-- Servlet API：401/403 处理器签名所需，运行时由使用者侧的 web 容器提供 -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <!-- 自动配置能力 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+        <!-- 为自定义配置提供 IDE 提示 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <!-- 可选：复用 molly-cache 做分布式权限缓存 -->
+        <dependency>
+            <groupId>cn.molly.cache</groupId>
+            <artifactId>molly-cache-spring-boot-starter</artifactId>
+            <version>${project.version}</version>
+            <optional>true</optional>
+        </dependency>
+        <!-- 项目基础模块 -->
+        <dependency>
+            <groupId>cn.molly.infrastructure</groupId>
+            <artifactId>molly-infrastructure</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+
+</project>

@@ -11,7 +11,7 @@
     </parent>
 
     <groupId>cn.molly.auth</groupId>
-    <artifactId>molly-authorization-server-spring-boot-starter</artifactId>
+    <artifactId>molly-auth-server-spring-boot-starter</artifactId>
 
     <dependencies>
         <!-- 核心依赖，提供 OAuth2 协议实现 -->

@@ -18,7 +18,7 @@
 molly/                                              # 父 POM (cn.molly)
 ├── molly-infrastructure/                           # 基础工具与通用模型
 │   └── (cn.molly.infrastructure)
-├── molly-authorization-server-spring-boot-starter/ # OAuth2 授权服务器 Starter
+├── molly-auth-server-spring-boot-starter/       # OAuth2 认证服务器 Starter（发令牌）
 │   └── cn.molly.security.auth
 │       ├── config/
 │       │   └── MollyAuthServerAutoConfiguration    # 核心自动配置
@@ -26,6 +26,18 @@ molly/                                              # 父 POM (cn.molly)
 │       │   └── MollyAuthServerProperties           # 配置属性: molly.security.auth.*
 │       └── service/
 │           └── MollyUserAccountService             # 用户账户 SPI 扩展
+├── molly-authorization-spring-boot-starter/     # 资源服务器 + RBAC 鉴权 Starter（验令牌 + 鉴权）
+│   └── cn.molly.security.authorization
+│       ├── config/                             # 4 个自动配置：主装配 / 资源服务器 / RBAC / 统一异常
+│       ├── properties/                         # 配置属性: molly.security.authorization.*
+│       ├── resource/                           # JWT -> Authentication 转换器
+│       ├── exception/                          # 401/403 统一 JSON 响应
+│       └── rbac/
+│           ├── annotation/                     # @MollyPreAuthorize 注解
+│           ├── aop/                            # 注解切面
+│           ├── core/                           # SPI（MollyPermissionService）+ PermissionEvaluator
+│           ├── cache/                          # 权限 TTL 缓存
+│           └── url/                            # 动态 URL 鉴权
 ├── molly-oss-spring-boot-starter/              # 对象存储服务 Starter
 │   └── cn.molly.oss
 │       ├── config/                             # 自动配置
@@ -44,15 +56,20 @@ molly/                                              # 父 POM (cn.molly)
 │       ├── properties/                         # 配置属性: molly.cache.*
 │       ├── support/redis/                      # Redisson 默认实现
 │       └── sync/                               # 事务后置失效同步器
-└── molly-auth-server-example/                      # 示例认证服务器应用
-    └── cn.molly.example.auth
-        ├── AuthServerApplication                   # Spring Boot 主类 (端口 9000)
-        └── config/SecurityConfig                   # 安全配置示例
+├── molly-auth-server-example/                  # 示例认证服务器应用
+│   └── cn.molly.example.auth
+│       ├── AuthServerApplication               # Spring Boot 主类 (端口 9000)
+│       └── config/SecurityConfig               # 安全配置示例
+└── molly-resource-server-example/              # 示例资源服务器应用
+    └── cn.molly.example.resource
+        ├── ResourceServerApplication           # Spring Boot 主类 (端口 9100)
+        ├── controller/UserController           # @MollyPreAuthorize 示例接口
+        └── service/DemoPermissionService       # 权限 SPI 示例实现
 ```
 
 ---
 
-## molly-authorization-server-spring-boot-starter
+## molly-auth-server-spring-boot-starter
 
 ### 用途
 
@@ -113,7 +130,7 @@ Starter **不处理数据存储**，使用者必须自行提供以下 Bean：
 ```xml
 <dependency>
     <groupId>cn.molly.auth</groupId>
-    <artifactId>molly-authorization-server-spring-boot-starter</artifactId>
+    <artifactId>molly-auth-server-spring-boot-starter</artifactId>
     <version>${revision}</version>
 </dependency>
 <dependency>
@@ -227,6 +244,216 @@ curl http://localhost:9000/oauth2/jwks
 curl -X POST -u test-client:secret \
   http://localhost:9000/oauth2/token \
   -d "grant_type=client_credentials&scope=openid"
+```
+
+---
+
+## molly-authorization-spring-boot-starter
+
+### 用途
+
+与 `molly-auth-server-spring-boot-starter` 形成互补——后者负责**颁发 JWT**，本 Starter 负责**校验 JWT 并进行权限控制**。一次依赖引入即可为业务服务提供：
+
+- **OAuth2 资源服务器**：基于 `issuer-uri` 自动拉 JWKS 验签，从 JWT claim 构建 `Authentication`
+- **方法级权限注解**：`@MollyPreAuthorize` 支持单权限 / anyOf / allOf 三种语义，同时兼容 Spring 原生 `@PreAuthorize`
+- **动态 URL 鉴权**：通过 SPI 在运行时注入 `pattern + method + 所需权限` 规则，支持热刷新
+- **权限数据 SPI**：`MollyPermissionService` 让使用者自由对接数据库 / 远程权限中心；未提供时默认直接使用 JWT 中的 `authorities`
+- **TTL 权限缓存**：本地内存缓存 + 过期时间抖动，降低权限源查询压力，支持主动失效
+- **统一 401/403**：手写 JSON 异常响应，结构一致，无需额外依赖 Jackson
+
+### 设计思路
+
+#### 1. 基于标准 OAuth2 Resource Server
+
+底层复用 Spring Security `oauth2ResourceServer().jwt()`，通过 `NimbusJwtDecoder` 远端获取公钥验签；自定义 `MollyJwtAuthenticationConverter` 从可配置的 claim 名（默认 `authorities`）读取权限列表，与认证 Starter 的 Token Customizer 形成契约闭环。
+
+#### 2. SPI 驱动 — 权限数据不绑定持久化
+
+核心接口 `MollyPermissionService#loadPermissions(Authentication)` 交由使用者实现（数据库 / 微服务 / 缓存均可）；未提供任何实现时，由 `DefaultMollyPermissionService` 兜底，直接读取 JWT 中的 authorities，实现零配置可用。
+
+#### 3. 注解双栈 — 共享一套 PermissionEvaluator
+
+`@MollyPreAuthorize`（自定义 AOP）与 Spring `@PreAuthorize` 同时可用，两者底层都经过 `MollyPermissionEvaluator`，语义完全一致。使用方可按团队偏好选择，甚至同一项目内混用。
+
+#### 4. 动态 URL 鉴权（可选）
+
+通过 `MollyPermissionService#loadUrlPermissionRules()` 提供一组 `UrlPermissionRule`（pattern + HttpMethod + 权限集合 + requireAll），由 `DynamicUrlAuthorizationManager` 在请求进入时匹配校验。默认关闭，通过 `rbac.dynamic-url.enabled=true` 启用。
+
+#### 5. 权限缓存与主动失效
+
+默认 `LocalPermissionCache` 使用 `ConcurrentHashMap` + 时间戳 TTL，零额外依赖。需要分布式缓存时实现 `PermissionCache` 接口替换即可。提供 `PermissionRefresher` 供业务在用户角色变更时主动失效指定 principal。
+
+#### 6. 零侵入可覆盖
+
+所有 Bean 默认 `@ConditionalOnMissingBean`，使用方可覆盖 `SecurityFilterChain`、`JwtDecoder`、`PermissionCache`、`AuthenticationEntryPoint`、`AccessDeniedHandler` 等任一组件。
+
+### 核心流程
+
+```
+BearerTokenAuthenticationFilter
+      ↓ JwtDecoder 验签 + 解析
+      ↓ MollyJwtAuthenticationConverter（按 claim 构建 Authentication）
+      ↓ DynamicUrlAuthorizationManager（可选，URL 规则匹配）
+      ↓ @MollyPreAuthorize AOP / Spring @PreAuthorize
+      ↓ MollyPermissionEvaluator（查权限缓存 / MollyPermissionService）
+      ↓ 比对通过 → Controller；不通过 → MollyAccessDeniedHandler 返回 403 JSON
+```
+
+### 文件说明
+
+| 文件 | 说明 |
+|------|------|
+| `config/MollyAuthorizationAutoConfiguration` | 顶层自动配置，启用 `MollyAuthorizationProperties` |
+| `config/MollyResourceServerConfiguration` | 注册 `JwtDecoder`、`MollyJwtAuthenticationConverter`、默认 `SecurityFilterChain`（`@Order(100)`，stateless，按配置启用白名单与动态 URL 鉴权） |
+| `config/MollyRbacConfiguration` | 启用 `@EnableMethodSecurity`，注册 `MollyPermissionEvaluator`、`MethodSecurityExpressionHandler`、`MollyPreAuthorizeAspect`、`PermissionRefresher`、`DynamicUrlAuthorizationManager` |
+| `config/MollyAuthorizationExceptionConfiguration` | 注册 `MollyAuthenticationEntryPoint`（401）与 `MollyAccessDeniedHandler`（403） |
+| `properties/MollyAuthorizationProperties` | 配置属性类，前缀 `molly.security.authorization`，含 `issuerUri`/`permitAll`/`rbac.*` 等字段 |
+| `resource/MollyJwtAuthenticationConverter` | 从 JWT 指定 claim 提取权限列表，拼接前缀后构造 `JwtAuthenticationToken` |
+| `exception/MollyAuthenticationEntryPoint` / `MollyAccessDeniedHandler` / `JsonErrorResponseWriter` | 未认证/无权限统一 JSON 响应 |
+| `rbac/core/MollyPermissionService` | 权限数据 SPI，`loadPermissions(auth)` + `loadUrlPermissionRules()` |
+| `rbac/core/DefaultMollyPermissionService` | 兜底实现：直接取 `Authentication.getAuthorities()` |
+| `rbac/core/MollyPermissionEvaluator` | `PermissionEvaluator` 实现，查缓存 → 查 SPI → 比对权限码 |
+| `rbac/core/PermissionRefresher` | 主动失效缓存的门面，支持 `refresh(principal)` / `refreshAll()` |
+| `rbac/annotation/MollyPreAuthorize` | 自定义注解，字段 `perm` / `anyPerm` / `allPerm`（优先级 perm > allPerm > anyPerm） |
+| `rbac/aop/MollyPreAuthorizeAspect` | AspectJ 切面，不通过时抛 `AccessDeniedException` |
+| `rbac/cache/PermissionCache` / `LocalPermissionCache` | 权限缓存抽象 + 本地 TTL 实现 |
+| `rbac/url/UrlPermissionRule` / `DynamicUrlAuthorizationManager` | 动态 URL 规则模型与运行时匹配器 |
+| `AutoConfiguration.imports` | Spring Boot 3.x 自动配置注册文件，声明 4 个自动配置类 |
+
+### 配置属性
+
+| 属性 | 说明 | 默认值 |
+|------|------|--------|
+| `molly.security.authorization.issuer-uri` | OIDC 签发者地址，与认证服务器对齐（必填） | - |
+| `molly.security.authorization.jwk-set-uri` | 显式 JWK Set 地址，不填则由 `issuer-uri` 推导 | - |
+| `molly.security.authorization.authorities-claim` | JWT 中承载权限列表的 claim 名 | `authorities` |
+| `molly.security.authorization.authority-prefix` | 权限前缀（如 `ROLE_`） | `` |
+| `molly.security.authorization.permit-all` | 放行 URL 白名单（Ant 风格） | `[]` |
+| `molly.security.authorization.rbac.enabled` | 是否启用 RBAC 相关 Bean | `true` |
+| `molly.security.authorization.rbac.dynamic-url.enabled` | 是否启用动态 URL 鉴权 | `false` |
+| `molly.security.authorization.rbac.cache.ttl` | 权限缓存过期时间 | `5m` |
+| `molly.security.authorization.rbac.cache.type` | 缓存类型：`local` / `redis`（需引入 molly-cache） | `local` |
+
+### 使用方法
+
+#### 1. 添加依赖
+
+```xml
+<dependency>
+    <groupId>cn.molly.authorization</groupId>
+    <artifactId>molly-authorization-spring-boot-starter</artifactId>
+    <version>${revision}</version>
+</dependency>
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-web</artifactId>
+</dependency>
+```
+
+#### 2. 配置 `application.yml`
+
+```yaml
+server:
+  port: 9100
+
+molly:
+  security:
+    authorization:
+      # 与 molly-auth-server-example (9000) 对齐
+      issuer-uri: http://localhost:9000
+      permit-all:
+        - /actuator/**
+      rbac:
+        enabled: true
+        dynamic-url:
+          enabled: false       # 按需开启
+        cache:
+          ttl: 5m
+```
+
+#### 3. 实现权限 SPI（可选）
+
+若只需按 JWT 中已有 `authorities` 鉴权，无需实现；如需接入自有权限数据源：
+
+```java
+@Service
+public class DbPermissionService implements MollyPermissionService {
+
+    private final UserPermissionRepository repo;
+
+    public DbPermissionService(UserPermissionRepository repo) {
+        this.repo = repo;
+    }
+
+    @Override
+    public Set<String> loadPermissions(Authentication authentication) {
+        return repo.findPermCodes(authentication.getName());
+    }
+
+    /** 可选：动态 URL 鉴权规则 */
+    @Override
+    public List<UrlPermissionRule> loadUrlPermissionRules() {
+        return List.of(
+                new UrlPermissionRule("/api/users/**", "GET",  Set.of("user:read"),  false),
+                new UrlPermissionRule("/api/users/**", "POST", Set.of("user:write"), false)
+        );
+    }
+}
+```
+
+#### 4. 方法级鉴权（注解）
+
+```java
+@RestController
+@RequestMapping("/api/users")
+public class UserController {
+
+    // 单权限
+    @GetMapping
+    @MollyPreAuthorize(perm = "user:read")
+    public List<User> list() { ... }
+
+    // anyOf：满足任一即可
+    @PostMapping
+    @MollyPreAuthorize(anyPerm = {"user:write", "admin"})
+    public void create(@RequestBody User u) { ... }
+
+    // allOf：同时具备
+    @GetMapping("/export")
+    @MollyPreAuthorize(allPerm = {"user:read", "user:export"})
+    public void export() { ... }
+}
+```
+
+> 也可使用 Spring 原生写法：`@PreAuthorize("hasPermission(null, 'user:read')")`，底层同样经过 `MollyPermissionEvaluator`。
+
+#### 5. 权限变更主动失效
+
+```java
+@Service
+public class RoleService {
+
+    private final PermissionRefresher refresher;
+
+    public void assignRole(String principal, String role) {
+        // ... 业务写入 ...
+        refresher.refresh(principal);   // 立即清除该用户权限缓存
+    }
+}
+```
+
+#### 6. 验证
+
+```bash
+# 1) 先从认证服务器 (9000) 获取令牌
+TOKEN=$(curl -s -u test-client:secret \
+  -X POST http://localhost:9000/oauth2/token \
+  -d "grant_type=client_credentials&scope=openid" | jq -r .access_token)
+
+# 2) 携带令牌访问资源服务器 (9100)
+curl -H "Authorization: Bearer $TOKEN" http://localhost:9100/api/users
+
+# 3) 缺少权限时将返回 403 JSON
 ```
 
 ---
@@ -633,12 +860,16 @@ mvn clean install
 mvn clean install -DskipTests
 
 # 构建指定模块
-mvn clean install -pl molly-authorization-server-spring-boot-starter -am
+mvn clean install -pl molly-auth-server-spring-boot-starter -am
+mvn clean install -pl molly-authorization-spring-boot-starter -am
 mvn clean install -pl molly-oss-spring-boot-starter -am
 mvn clean install -pl molly-cache-spring-boot-starter -am
 
-# 运行示例认证服务器
+# 运行示例认证服务器（端口 9000）
 mvn spring-boot:run -pl molly-auth-server-example
+
+# 运行示例资源服务器（端口 9100，需认证服务器先启动）
+mvn spring-boot:run -pl molly-resource-server-example
 ```
 
 ## 许可证
