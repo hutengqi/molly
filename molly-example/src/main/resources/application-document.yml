@@ -1,0 +1,56 @@
+# document profile：Word / Excel / PDF / Email 文档生成
+# 启动：mvn spring-boot:run -pl molly-example -Dspring-boot.run.profiles=document
+server:
+  port: 8081
+
+spring:
+  mail:
+    host: smtp.example.com
+    port: 465
+    username: noreply@example.com
+    password: change-me
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true
+  thymeleaf:
+    prefix: classpath:/templates/mail/
+    suffix: .html
+    mode: HTML
+    encoding: UTF-8
+    cache: false
+  # 排除授权 / 鉴权 Starter 的自动配置，避免无 issuer-uri 配置下启动失败。
+  autoconfigure:
+    exclude:
+      - cn.molly.security.auth.config.MollyAuthServerAutoConfiguration
+      - cn.molly.security.authorization.config.MollyAuthorizationAutoConfiguration
+      - cn.molly.security.authorization.config.MollyResourceServerConfiguration
+      - cn.molly.security.authorization.config.MollyRbacConfiguration
+      - cn.molly.security.authorization.config.MollyAuthorizationExceptionConfiguration
+
+molly:
+  document:
+    word:
+      template-location: classpath:/templates/word/
+      cache-templates: true
+    excel:
+      stream-window-size: 200
+      header-preset: default
+      header-separator: "."
+    pdf:
+      template-location: classpath:/templates/pdf/
+      flatten: true
+    email:
+      from: noreply@example.com
+      template-location: classpath:/templates/mail/
+      async:
+        enabled: true
+        core-pool-size: 4
+        max-pool-size: 16
+        queue-capacity: 200
+      retry:
+        enabled: true
+        max-attempts: 3
+        back-off: 2s

@@ -69,20 +69,16 @@ molly/                                              # 父 POM (cn.molly)
 │       │   └── style/                          # 样式解析与预设（避开 POI 64000 上限）
 │       ├── pdf/                                # PDFBox AcroForm 字段填充
 │       └── email/                              # JavaMail + Thymeleaf + 异步 + 重试
-├── molly-auth-server-example/                  # 示例认证服务器应用
-│   └── cn.molly.example.auth
-│       ├── AuthServerApplication               # Spring Boot 主类 (端口 9000)
-│       └── config/SecurityConfig               # 安全配置示例
-├── molly-resource-server-example/              # 示例资源服务器应用
-│   └── cn.molly.example.resource
-│       ├── ResourceServerApplication           # Spring Boot 主类 (端口 9100)
-│       ├── controller/UserController           # @MollyPreAuthorize 示例接口
-│       └── service/DemoPermissionService       # 权限 SPI 示例实现
-└── molly-document-example/                     # 示例文档应用
-    └── cn.molly.example.document
-        ├── DocumentExampleApplication          # Spring Boot 主类 (端口 8081)
-        ├── model/OrderRow                      # 注解驱动的 Excel 示例实体
-        └── web/DocumentController              # Word/Excel/PDF/Email 四类演示端点
+└── molly-example/                              # 统一示例应用（单主类 + Spring Profile 切换子示例）
+    └── cn.molly.example
+        ├── MollyExampleApplication             # 统一 Spring Boot 主类
+        ├── auth/config/SecurityConfig          # @Profile("auth") 认证服务器配置  (9000)
+        ├── resource/                           # @Profile("resource")                   (9100)
+        │   ├── controller/UserController        # @MollyPreAuthorize 示例接口
+        │   └── service/DemoPermissionService    # 权限 SPI 示例实现
+        └── document/                           # @Profile("document")                   (8081)
+            ├── model/OrderRow                   # 注解驱动的 Excel 示例实体
+            └── web/DocumentController           # Word/Excel/PDF/Email 四类演示端点
 ```
 
 ---
@@ -377,7 +373,7 @@ server:
 molly:
   security:
     authorization:
-      # 与 molly-auth-server-example (9000) 对齐
+      # 与 molly-example 的 auth profile (9000) 对齐
       issuer-uri: http://localhost:9000
       permit-all:
         - /actuator/**
@@ -1212,7 +1208,7 @@ public class NotifyService {
 
 #### 7. 验证
 
-在示例模块 `molly-document-example` 提供了 4 个演示端点，启动后（`mvn spring-boot:run -pl molly-document-example`）：
+在统一示例模块 `molly-example` 的 `document` profile 下提供了 4 个演示端点，启动（`mvn spring-boot:run -pl molly-example -Dspring-boot.run.profiles=document`）：
 
 ```bash
 # Word：模板渲染（需先将 contract.docx 放入 src/main/resources/templates/word/）
@@ -1243,6 +1239,105 @@ curl -X POST -H "Content-Type: application/json" \
 
 ---
 
+## molly-example
+
+### 用途
+
+以单个 Maven 模块 + 单个 Spring Boot 主类 `MollyExampleApplication` 统一演示 **认证服务器 / 资源服务器 / 文档生成** 三类场景，通过 `spring.profiles.active` 切换子示例。避免了为每个 Starter 分别维护独立 example 模块的冗余，同时保留了子示例间的彻底隔离。
+
+| profile | 端口 | 启用能力 | 主要端点 |
+|---------|------|---------|----------|
+| `auth` | 9000 | OAuth2/OIDC 授权服务器 | `/.well-known/openid-configuration`、`/oauth2/jwks`、`/oauth2/token` |
+| `resource` | 9100 | 资源服务器 + RBAC | `/api/users`、`/api/users/{id}`、`/api/users/export` |
+| `document` | 8081 | Word / Excel / PDF / Email | `/doc/word/contract.docx`、`/doc/excel/orders`、`/doc/pdf/invoice.pdf`、`/doc/mail/demo` |
+
+### 设计思路
+
+#### 1. 单主类 + @Profile 条件化装配
+
+所有 `@Configuration` / `@Service` / `@RestController` 都加了 `@Profile("auth|resource|document")`，确保三个子示例的 Bean 仅在对应 profile 激活时注入。默认不激活任何 profile 时会因三个 Starter 同时加载而冲突，必须显式指定。
+
+#### 2. AutoConfiguration 精确排除
+
+三个 Starter 的自动配置同时在 classpath，值直接启动会触发多条 `SecurityFilterChain` / `JavaMailSender` 等冲突。各 profile 的 YAML 使用 `spring.autoconfigure.exclude` 显式剔除其它两组 Starter 的自动配置类（用全限定名）。
+
+#### 3. Profile 分级配置布局
+
+公共内容写在 `application.yml`，三个子配置 `application-auth.yml` / `application-resource.yml` / `application-document.yml` 各自持有专属端口、业务属性和 exclude 列表。
+
+### 目录结构
+
+```
+molly-example/
+└── src/main/
+    ├── java/cn/molly/example/
+    │   ├── MollyExampleApplication.java     # 统一主类
+    │   ├── auth/config/SecurityConfig.java  # @Profile("auth") 授权服务器安全配置
+    │   ├── resource/                        # @Profile("resource")
+    │   │   ├── controller/UserController.java        # @MollyPreAuthorize 演示
+    │   │   └── service/DemoPermissionService.java    # 权限 SPI 实现
+    │   └── document/                        # @Profile("document")
+    │       ├── TemplateSmokeMain.java                # 模板本地冒烟 main（脱源 Web）
+    │       ├── model/OrderRow.java                   # 注解驱动 Excel 实体
+    │       └── web/DocumentController.java           # 4 个演示端点
+    └── resources/
+        ├── application.yml                  # 公共配置
+        ├── application-auth.yml             # auth profile
+        ├── application-resource.yml         # resource profile
+        ├── application-document.yml         # document profile
+        └── templates/
+            ├── mail/{welcome.html, notice.html}       # 邮件模板（Thymeleaf）
+            ├── word/contract.docx                     # Word 演示模板（poi-tl 占位符）
+            └── pdf/invoice.pdf                        # PDF 演示模板（AcroForm 字段）
+```
+
+### 快速启动
+
+```bash
+# 认证服务器（端口 9000）
+mvn spring-boot:run -pl molly-example -Dspring-boot.run.profiles=auth
+
+# 资源服务器（端口 9100，需 auth profile 已启动 —— 用于拉 JWK）
+mvn spring-boot:run -pl molly-example -Dspring-boot.run.profiles=resource
+
+# 文档应用（端口 8081，独立运行）
+mvn spring-boot:run -pl molly-example -Dspring-boot.run.profiles=document
+```
+
+### 验证命令
+
+```bash
+# ---- auth profile ----
+curl http://localhost:9000/.well-known/openid-configuration    # HTTP 200
+curl -X POST -u test-client:secret http://localhost:9000/oauth2/token \
+     -d "grant_type=client_credentials&scope=openid"
+
+# ---- resource profile（先从上面 auth 拿令牌）----
+TOKEN=$(curl -s -u test-client:secret -X POST http://localhost:9000/oauth2/token \
+         -d "grant_type=client_credentials&scope=openid" | jq -r .access_token)
+curl -H "Authorization: Bearer $TOKEN" http://localhost:9100/api/users
+
+# ---- document profile ----
+curl -X POST -H "Content-Type: application/json" \
+     -d '{"contractNo":"C-001","partyA":"张三","partyB":"Molly"}' \
+     http://localhost:8081/doc/word/contract.docx -o contract.docx
+curl http://localhost:8081/doc/excel/orders -o orders.xlsx
+curl -X POST -H "Content-Type: application/json" \
+     -d '{"invoiceNo":"INV-001","customer":"张三","total":"199.90"}' \
+     http://localhost:8081/doc/pdf/invoice.pdf -o invoice.pdf
+curl -X POST -H "Content-Type: application/json" \
+     -d '{"to":"user@example.com","name":"张三"}' \
+     http://localhost:8081/doc/mail/demo
+```
+
+### 扩展与定制
+
+- **新增子示例**：新增包 `cn.molly.example.<name>`，所有装配类打 `@Profile("<name>")`，再新增 `application-<name>.yml` 显式剔除其它 Starter 的 AutoConfiguration 即可
+- **切换为多主类**：若业务需要按子模块打包独立可运行 jar，可改为为每个 profile 提供独立 `@SpringBootApplication` 主类，配合 `spring-boot-maven-plugin` 的 `classifier` 多打包
+- **模板资产替换**：`templates/word/contract.docx` 与 `templates/pdf/invoice.pdf` 为演示用，实际项目应根据 `molly.document.word.template-location` / `molly.document.pdf.template-location` 指向自有模板
+
+---
+
 ## 构建与运行
 
 ```bash
@@ -1259,14 +1354,14 @@ mvn clean install -pl molly-oss-spring-boot-starter -am
 mvn clean install -pl molly-cache-spring-boot-starter -am
 mvn clean install -pl molly-document-spring-boot-starter -am
 
-# 运行示例认证服务器（端口 9000）
-mvn spring-boot:run -pl molly-auth-server-example
+# 运行示例认证服务器（auth profile，端口 9000）
+mvn spring-boot:run -pl molly-example -Dspring-boot.run.profiles=auth
 
-# 运行示例资源服务器（端口 9100，需认证服务器先启动）
-mvn spring-boot:run -pl molly-resource-server-example
+# 运行示例资源服务器（resource profile，端口 9100，需认证服务器先启动）
+mvn spring-boot:run -pl molly-example -Dspring-boot.run.profiles=resource
 
-# 运行示例文档应用（端口 8081）
-mvn spring-boot:run -pl molly-document-example
+# 运行示例文档应用（document profile，端口 8081）
+mvn spring-boot:run -pl molly-example -Dspring-boot.run.profiles=document
 ```
 
 ## 许可证

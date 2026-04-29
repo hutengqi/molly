@@ -1,0 +1,11 @@
+# molly-example 公共配置骨架。
+# 真实端口 / 功能属性写在 application-<profile>.yml 中。
+# 通过 `-Dspring-boot.run.profiles=auth|resource|document` 激活具体子示例。
+spring:
+  application:
+    name: molly-example
+  main:
+    banner-mode: console
+# 未显式激活任何 profile 时，应用启动会因三个 Starter 同时加载而冲突。
+# 强烈建议始终通过命令行指定 profile：
+#   mvn spring-boot:run -pl molly-example -Dspring-boot.run.profiles=auth|resource|document

@@ -4,6 +4,7 @@ import cn.molly.document.email.DefaultMailService;
 import cn.molly.document.email.MailService;
 import cn.molly.document.properties.MollyDocumentProperties;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -43,7 +44,7 @@ public class MollyEmailAutoConfiguration {
     public MailService mailService(JavaMailSender mailSender,
                                    MollyDocumentProperties properties,
                                    ObjectProvider<TemplateEngine> templateEngineProvider,
-                                   Executor mollyMailAsyncExecutor) {
+                                   @Qualifier("mollyMailAsyncExecutor") Executor mollyMailAsyncExecutor) {
         TemplateEngine engine = templateEngineProvider.getIfAvailable();
         return new DefaultMailService(mailSender, properties.getEmail(), engine, mollyMailAsyncExecutor);
     }

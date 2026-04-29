@@ -1,0 +1,33 @@
+# resource profile：JWT 资源服务器 + RBAC 鉴权
+# 启动：mvn spring-boot:run -pl molly-example -Dspring-boot.run.profiles=resource
+server:
+  port: 9100
+
+molly:
+  security:
+    authorization:
+      # 与 auth profile (9000) 对齐
+      issuer-uri: http://localhost:9000
+      # 公共接口放行
+      permit-all:
+        - /actuator/**
+      rbac:
+        enabled: true
+        dynamic-url:
+          enabled: false
+        cache:
+          ttl: 5m
+
+# 排除授权服务器与文档能力的自动配置。
+spring:
+  autoconfigure:
+    exclude:
+      - cn.molly.security.auth.config.MollyAuthServerAutoConfiguration
+      - cn.molly.document.config.MollyDocumentAutoConfiguration
+      - cn.molly.document.config.MollyWordAutoConfiguration
+      - cn.molly.document.config.MollyExcelAutoConfiguration
+      - cn.molly.document.config.MollyPdfAutoConfiguration
+      - cn.molly.document.config.MollyEmailAutoConfiguration
+      - org.springframework.boot.autoconfigure.mail.MailSenderAutoConfiguration
+      - org.springframework.boot.autoconfigure.mail.MailSenderValidatorAutoConfiguration
+      - org.springframework.boot.autoconfigure.thymeleaf.ThymeleafAutoConfiguration

@@ -5,6 +5,7 @@ import cn.molly.document.properties.MollyDocumentProperties;
 import cn.molly.document.word.DefaultWordTemplate;
 import cn.molly.document.word.WordTemplate;
 import com.deepoove.poi.XWPFTemplate;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -29,7 +30,7 @@ public class MollyWordAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public WordTemplate wordTemplate(TemplateLoader wordTemplateLoader) {
+    public WordTemplate wordTemplate(@Qualifier("wordTemplateLoader") TemplateLoader wordTemplateLoader) {
         return new DefaultWordTemplate(wordTemplateLoader);
     }
 }

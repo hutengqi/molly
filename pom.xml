@@ -12,12 +12,10 @@
         <module>molly-infrastructure</module>
         <module>molly-authorization-spring-boot-starter</module>
         <module>molly-auth-server-spring-boot-starter</module>
-        <module>molly-auth-server-example</module>
-        <module>molly-resource-server-example</module>
         <module>molly-oss-spring-boot-starter</module>
         <module>molly-cache-spring-boot-starter</module>
         <module>molly-document-spring-boot-starter</module>
-        <module>molly-document-example</module>
+        <module>molly-example</module>
     </modules>
 
     <properties>

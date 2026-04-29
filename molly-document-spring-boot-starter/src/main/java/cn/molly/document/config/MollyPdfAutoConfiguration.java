@@ -5,6 +5,7 @@ import cn.molly.document.pdf.DefaultPdfTemplate;
 import cn.molly.document.pdf.PdfTemplate;
 import cn.molly.document.properties.MollyDocumentProperties;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -29,7 +30,7 @@ public class MollyPdfAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public PdfTemplate pdfTemplate(TemplateLoader pdfTemplateLoader,
+    public PdfTemplate pdfTemplate(@Qualifier("pdfTemplateLoader") TemplateLoader pdfTemplateLoader,
                                    MollyDocumentProperties properties) {
         return new DefaultPdfTemplate(pdfTemplateLoader, properties.getPdf());
     }

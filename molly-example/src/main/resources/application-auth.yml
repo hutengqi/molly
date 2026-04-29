@@ -1,0 +1,27 @@
+# auth profile：OAuth2 / OIDC 授权服务器
+# 启动：mvn spring-boot:run -pl molly-example -Dspring-boot.run.profiles=auth
+server:
+  port: 9000
+
+molly:
+  security:
+    auth:
+      # 令牌签发者地址，必须与当前服务地址匹配（OIDC 标准要求）
+      issuer-uri: http://localhost:9000
+
+# 排除其它 Starter 的自动配置，避免同一进程注入多条 SecurityFilterChain 或不必要的资源服务器 / 文档能力。
+spring:
+  autoconfigure:
+    exclude:
+      - cn.molly.security.authorization.config.MollyAuthorizationAutoConfiguration
+      - cn.molly.security.authorization.config.MollyResourceServerConfiguration
+      - cn.molly.security.authorization.config.MollyRbacConfiguration
+      - cn.molly.security.authorization.config.MollyAuthorizationExceptionConfiguration
+      - cn.molly.document.config.MollyDocumentAutoConfiguration
+      - cn.molly.document.config.MollyWordAutoConfiguration
+      - cn.molly.document.config.MollyExcelAutoConfiguration
+      - cn.molly.document.config.MollyPdfAutoConfiguration
+      - cn.molly.document.config.MollyEmailAutoConfiguration
+      - org.springframework.boot.autoconfigure.mail.MailSenderAutoConfiguration
+      - org.springframework.boot.autoconfigure.mail.MailSenderValidatorAutoConfiguration
+      - org.springframework.boot.autoconfigure.thymeleaf.ThymeleafAutoConfiguration
