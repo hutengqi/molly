@@ -56,15 +56,33 @@ molly/                                              # 父 POM (cn.molly)
 │       ├── properties/                         # 配置属性: molly.cache.*
 │       ├── support/redis/                      # Redisson 默认实现
 │       └── sync/                               # 事务后置失效同步器
+├── molly-document-spring-boot-starter/         # 文档生成 Starter（Word/Excel/PDF/Email）
+│   └── cn.molly.document
+│       ├── config/                             # 5 个自动配置（顶层 + Word/Excel/PDF/Email 子能力守门）
+│       ├── properties/                         # 配置属性: molly.document.*
+│       ├── core/                               # 统一异常 + 模板加载抽象
+│       ├── word/                               # poi-tl 封装（模板缓存 + render 门面）
+│       ├── excel/                              # POI 封装（注解 + 类型转换 SPI + 流式）
+│       │   ├── annotation/                     # @ExcelSheet/@ExcelColumn/@ExcelStyle 等 6 个注解
+│       │   ├── converter/                      # CellConverter SPI + 6 个内置转换器
+│       │   ├── meta/                           # ExcelClassMeta 反射缓存
+│       │   └── style/                          # 样式解析与预设（避开 POI 64000 上限）
+│       ├── pdf/                                # PDFBox AcroForm 字段填充
+│       └── email/                              # JavaMail + Thymeleaf + 异步 + 重试
 ├── molly-auth-server-example/                  # 示例认证服务器应用
 │   └── cn.molly.example.auth
 │       ├── AuthServerApplication               # Spring Boot 主类 (端口 9000)
 │       └── config/SecurityConfig               # 安全配置示例
-└── molly-resource-server-example/              # 示例资源服务器应用
-    └── cn.molly.example.resource
-        ├── ResourceServerApplication           # Spring Boot 主类 (端口 9100)
-        ├── controller/UserController           # @MollyPreAuthorize 示例接口
-        └── service/DemoPermissionService       # 权限 SPI 示例实现
+├── molly-resource-server-example/              # 示例资源服务器应用
+│   └── cn.molly.example.resource
+│       ├── ResourceServerApplication           # Spring Boot 主类 (端口 9100)
+│       ├── controller/UserController           # @MollyPreAuthorize 示例接口
+│       └── service/DemoPermissionService       # 权限 SPI 示例实现
+└── molly-document-example/                     # 示例文档应用
+    └── cn.molly.example.document
+        ├── DocumentExampleApplication          # Spring Boot 主类 (端口 8081)
+        ├── model/OrderRow                      # 注解驱动的 Excel 示例实体
+        └── web/DocumentController              # Word/Excel/PDF/Email 四类演示端点
 ```
 
 ---
@@ -850,6 +868,381 @@ public class ReportService {
 
 ---
 
+## molly-document-spring-boot-starter
+
+### 用途
+
+一次引入为业务应用提供 **Word / Excel / PDF / Email 四类文档生成能力** ，子能力可拆可合、按需激活：
+
+| 子能力 | 激活条件 | 门面 Bean | 典型场景 |
+|------|----------|-----------|----------|
+| Word | classpath 存在 `XWPFTemplate`（引入 `poi-tl`） | `WordTemplate` | 合同 / 报告 / 通知模板渲染 |
+| Excel | classpath 存在 POI `Workbook`（引入 `poi-ooxml`） | `ExcelTemplate` | 批量导入导出 + 多级表头 + 流式 |
+| PDF | classpath 存在 `PDDocument`（引入 `pdfbox`） | `PdfTemplate` | AcroForm 模板字段填充 + flatten |
+| Email | classpath 存在 `JavaMailSender`（引入 `spring-boot-starter-mail`） | `MailService` | 模板渲染 + 附件 + 异步 + 重试 |
+
+核心能力一览：
+
+- **注解驱动 Excel**：6 个专用注解 + CellConverter SPI + 6 个内置转换器，自动处理日期 / 枚举 / 布尔 / 数字等类型
+- **多级表头**：支持以 `.` 分隔的层次表头与自动合并单元格（同列前缀一致 ⇒ 横向合并，同值连续段 ⇒ 纵向合并）
+- **样式缓存**：`ExcelStyleResolver` 按样式指纹复用 `CellStyle`，避开 POI 64000 样式上限
+- **流式导出**： `exportStream` 默认使用 SXSSF，滑窗可配，万级数据恢复内存不超过 100MB
+- **AcroForm 填充**：默认 flatten 锁定表单，避免下发给客户后被二次编辑
+- **邮件门面**：`MailRequest` 统一承载收件人 / 抄送 / 密送 / 附件 / 内联图片 / 模板变量，`sendAsync` 基于线程池，`send` 支持 backoff 重试
+
+### 设计思路
+
+#### 1. 子能力可拆可合（`@ConditionalOnClass` 守门）
+
+顶层 `MollyDocumentAutoConfiguration` 仅注册 `MollyDocumentProperties`。Word / Excel / PDF / Email 四个子 AutoConfiguration 各自要求相应 SDK 类存在时才激活，实现了按需激活。所有重依赖 `optional=true`，不用就不引。
+
+#### 2. 模板加载统一抽象
+
+`TemplateLoader` 抽象模板来源，支持 `classpath:` / `file:` / 绝对路径三种前缀，内置按路径缓存字节数组。Word 与 PDF 各自拥有独立命名的 Bean（`wordTemplateLoader` / `pdfTemplateLoader`），可分别指定根路径。
+
+#### 3. 注解驱动 + 类型转换 SPI（Excel）
+
+实体类反射一次缓存至 `ExcelClassMeta`（按 `Class + DatePattern` 维度）；单元格值由 `CellConverter<T>` SPI 转换，内置 `String / Date / LocalDateTime / Enum / Boolean(Y/N) / Number` 六类，业务可在字段上用 `@ExcelConverter(xxx.class)` 直接注入自定义转换器。
+
+#### 4. PDF AcroForm 填充后 flatten
+
+默认 `molly.document.pdf.flatten=true`，填充后将表单字段固化为静态内容；如需保留可编辑表单（如内部审批场景）可关闭。中文字体通过 `molly.document.pdf.font.chinese` 指定资源路径。
+
+#### 5. 邮件异步 + 重试
+
+`DefaultMailService#sendAsync` 依赖名为 `mollyMailAsyncExecutor` 的 `ThreadPoolTaskExecutor`（可覆盖）提交 `CompletableFuture`；`send` 含内置 backoff 重试循环，达到 `max-attempts` 仍失败时抑制并抛出最后异常。模板渲染优先使用 Thymeleaf `TemplateEngine`（无模板引擎时降级为朴素 `${var}` 替换）。
+
+### 核心流程
+
+```
+Word  : WordTemplate.render(name, model, out)
+          ↓ TemplateLoader.readBytes(name)
+          ↓ XWPFTemplate.compile(in).render(model).writeAndClose(out)
+
+Excel : ExcelTemplate.export(type, rows, out)
+          ↓ ExcelClassMeta.of(type)        // 反射+注解解析，进程级缓存
+          ↓ writeHeader(multi-level merge)
+          ↓ CellConverter.toCellValue       // 按字段类型分发
+          ↓ ExcelStyleResolver             // CellStyle 指纹复用
+
+PDF   : PdfTemplate.render(name, fields, out)
+          ↓ Loader.loadPDF(bytes)
+          ↓ PDAcroForm.getField(name).setValue(value)
+          ↓ form.flatten() → doc.save(out)
+
+Email : MailService.sendAsync(request)
+          ↓ executor.submit(() -> send(request))
+          ↓ resolveBody(Thymeleaf 或 ${var} 替换)
+          ↓ JavaMailSender + MimeMessageHelper
+          ↓ backoff retry loop
+```
+
+### 文件说明
+
+| 文件 | 说明 |
+|------|------|
+| `config/MollyDocumentAutoConfiguration` | 顶层自动配置，启用 `MollyDocumentProperties` |
+| `config/MollyWordAutoConfiguration` | Word 子能力守门，`@ConditionalOnClass(XWPFTemplate.class)`，注册 `wordTemplateLoader` + `WordTemplate` |
+| `config/MollyExcelAutoConfiguration` | Excel 子能力守门，`@ConditionalOnClass(Workbook.class)`，注册 `ConverterRegistry` + `ExcelTemplate` |
+| `config/MollyPdfAutoConfiguration` | PDF 子能力守门，`@ConditionalOnClass(PDDocument.class)`，注册 `pdfTemplateLoader` + `PdfTemplate` |
+| `config/MollyEmailAutoConfiguration` | Email 子能力守门，`@ConditionalOnClass(JavaMailSender.class)`，注册 `mollyMailAsyncExecutor` + `MailService` |
+| `properties/MollyDocumentProperties` | 配置属性根，前缀 `molly.document`，含 `Word/Excel/Pdf/Email/Async/Retry/Font` 嵌套配置 |
+| `core/TemplateLoader` | 模板读取抽象，支持 classpath / file / 绝对路径 + 可选缓存 |
+| `core/DocumentException` | 文档特定运行时异常 |
+| `word/WordTemplate` / `DefaultWordTemplate` | poi-tl 门面与默认实现 |
+| `excel/ExcelTemplate` / `DefaultExcelTemplate` | Excel 门面，4 个方法：`export` / `exportStream` / `importFrom` / `importStream` |
+| `excel/annotation/*` | `@ExcelSheet` / `@ExcelColumn` / `@ExcelStyle` / `@ExcelConverter` / `@ExcelDateFormat` / `@ExcelEnum` |
+| `excel/converter/*` | `CellConverter` SPI + `ConverterRegistry` + 6 个内置转换器 |
+| `excel/meta/ExcelClassMeta` / `ExcelColumnMeta` | 实体类元数据（进程级缓存） |
+| `excel/style/ExcelStyleResolver` / `DefaultStylePresets` | `CellStyle` 指纹复用（避开 64000 上限）+ 预设样式 |
+| `pdf/PdfTemplate` / `DefaultPdfTemplate` | PDFBox AcroForm 填充与 flatten |
+| `email/MailService` / `DefaultMailService` | JavaMail 门面，Thymeleaf 可选 + 异步线程池 + backoff 重试 |
+| `email/MailRequest` | 邮件请求模型，含 `Attachment` / `Inline` 嵌套类 |
+| `AutoConfiguration.imports` | 声明 5 个自动配置类 |
+
+### 配置属性
+
+| 属性 | 说明 | 默认值 |
+|------|------|--------|
+| `molly.document.word.template-location` | Word 模板根路径 | `classpath:templates/word/` |
+| `molly.document.word.cache-templates` | 是否缓存模板字节 | `true` |
+| `molly.document.excel.stream-window-size` | SXSSF 流式导出滑窗 | `100` |
+| `molly.document.excel.auto-size-column` | 是否自动列宽 | `false` |
+| `molly.document.excel.compress-temp-files` | SXSSF 临时文件是否压缩 | `true` |
+| `molly.document.excel.date-pattern` | 默认日期格式 | `yyyy-MM-dd HH:mm:ss` |
+| `molly.document.excel.header-preset` | 表头预设：`default` / `plain` / `bordered` | `default` |
+| `molly.document.excel.header-separator` | 多级表头分隔符 | `.` |
+| `molly.document.pdf.template-location` | PDF 模板根路径 | `classpath:templates/pdf/` |
+| `molly.document.pdf.flatten` | 填充后是否 flatten（表单不可再编辑） | `true` |
+| `molly.document.pdf.font.chinese` | 中文字体资源路径 | - |
+| `molly.document.email.from` | 默认发件人 | - |
+| `molly.document.email.template-location` | 邮件模板根路径 | `classpath:/templates/mail/` |
+| `molly.document.email.template-suffix` | 模板后缀 | `.html` |
+| `molly.document.email.async.enabled` | 是否启用异步发送 | `true` |
+| `molly.document.email.async.core-pool-size` | 线程池核心线程数 | `4` |
+| `molly.document.email.async.max-pool-size` | 线程池最大线程数 | `16` |
+| `molly.document.email.async.queue-capacity` | 队列容量 | `200` |
+| `molly.document.email.retry.enabled` | 是否启用重试 | `true` |
+| `molly.document.email.retry.max-attempts` | 最大尝试次数 | `3` |
+| `molly.document.email.retry.back-off` | 重试退避时间 | `PT2S` |
+
+### 使用方法
+
+#### 1. 添加依赖
+
+```xml
+<dependency>
+    <groupId>cn.molly.document</groupId>
+    <artifactId>molly-document-spring-boot-starter</artifactId>
+    <version>${revision}</version>
+</dependency>
+
+<!-- 按需引入子能力依赖 -->
+<!-- Word -->
+<dependency>
+    <groupId>com.deepoove</groupId>
+    <artifactId>poi-tl</artifactId>
+</dependency>
+<!-- Excel -->
+<dependency>
+    <groupId>org.apache.poi</groupId>
+    <artifactId>poi-ooxml</artifactId>
+</dependency>
+<!-- PDF -->
+<dependency>
+    <groupId>org.apache.pdfbox</groupId>
+    <artifactId>pdfbox</artifactId>
+</dependency>
+<!-- Email -->
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-mail</artifactId>
+</dependency>
+<!-- 可选：Thymeleaf 邮件模板 -->
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-thymeleaf</artifactId>
+</dependency>
+```
+
+#### 2. 配置 `application.yml`
+
+```yaml
+spring:
+  mail:
+    host: smtp.example.com
+    port: 465
+    username: noreply@example.com
+    password: change-me
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true
+
+molly:
+  document:
+    word:
+      template-location: classpath:/templates/word/
+    excel:
+      stream-window-size: 200
+      header-separator: "."
+    pdf:
+      template-location: classpath:/templates/pdf/
+      flatten: true
+    email:
+      from: noreply@example.com
+      template-location: classpath:/templates/mail/
+      async:
+        core-pool-size: 4
+        max-pool-size: 16
+      retry:
+        max-attempts: 3
+        back-off: 2s
+```
+
+#### 3. Word：poi-tl 模板渲染
+
+将 `.docx` 放入 `classpath:/templates/word/`，模板内使用 `{{var}}` / `{{?x}}...{{/x}}` / `{{*list}}` / `{{@img}}` 等 poi-tl 语法。
+
+```java
+@Service
+@RequiredArgsConstructor
+public class ContractService {
+
+    private final WordTemplate wordTemplate;
+
+    public void export(Contract c, OutputStream out) throws Exception {
+        Map<String, Object> model = Map.of(
+                "name", c.getCustomerName(),
+                "amount", c.getAmount(),
+                "signDate", c.getSignDate()
+        );
+        wordTemplate.render("contract.docx", model, out);
+    }
+}
+```
+
+#### 4. Excel：注解驱动导出 / 导入
+
+实体类声明（`.` 分隔多级表头，`@ExcelEnum` 自动把枚举转为 label）：
+
+```java
+@Data
+@ExcelSheet(name = "订单")
+public class OrderRow {
+
+    @ExcelColumn(header = "订单号", order = 1, width = 24)
+    private String orderNo;
+
+    @ExcelColumn(header = "客户.姓名", order = 2)       // 属于「客户」父级表头
+    private String customerName;
+
+    @ExcelColumn(header = "客户.手机", order = 3)
+    private String customerPhone;
+
+    @ExcelColumn(header = "状态", order = 4)
+    @ExcelEnum(labelMethod = "getLabel", codeMethod = "getCode")
+    private OrderStatus status;
+
+    @ExcelColumn(header = "创建时间", order = 5)
+    @ExcelDateFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private LocalDateTime createdAt;
+}
+```
+
+```java
+@RestController
+@RequiredArgsConstructor
+public class OrderExportController {
+
+    private final ExcelTemplate excelTemplate;
+    private final OrderService orderService;
+
+    @GetMapping("/orders/export")
+    public void export(HttpServletResponse resp) throws IOException {
+        resp.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        resp.setHeader("Content-Disposition", "attachment; filename=orders.xlsx");
+        // 大数据集推荐使用 exportStream（SXSSF）
+        excelTemplate.exportStream(OrderRow.class, orderService.list(), resp.getOutputStream());
+    }
+}
+```
+
+自定义转换器（如货币金额带单位）：
+
+```java
+public class MoneyConverter implements CellConverter<BigDecimal> {
+    @Override
+    public Object toCellValue(BigDecimal v, ConvertContext ctx) {
+        return v == null ? "" : "￥" + v.setScale(2, RoundingMode.HALF_UP);
+    }
+    @Override
+    public BigDecimal fromCellValue(Object cell, ConvertContext ctx) {
+        if (cell == null) return null;
+        String s = cell.toString().replace("￥", "").trim();
+        return s.isEmpty() ? null : new BigDecimal(s);
+    }
+}
+
+// 在字段上声明
+@ExcelColumn(header = "金额", order = 4)
+@ExcelConverter(MoneyConverter.class)
+private BigDecimal amount;
+```
+
+#### 5. PDF：AcroForm 字段填充
+
+用 Acrobat / WPS / LibreOffice 制作带「文本域」的 `.pdf` 模板，记住每个字段的 `Name`，填充时作为 `Map` 的 key：
+
+```java
+@Service
+@RequiredArgsConstructor
+public class InvoiceService {
+
+    private final PdfTemplate pdfTemplate;
+
+    public void generate(Invoice inv, OutputStream out) throws Exception {
+        Map<String, String> fields = Map.of(
+                "invoiceNo", inv.getInvoiceNo(),
+                "customer", inv.getCustomerName(),
+                "amount", inv.getAmount().toPlainString()
+        );
+        pdfTemplate.render("invoice.pdf", fields, out);
+    }
+}
+```
+
+#### 6. Email：同步与异步发送
+
+```java
+@Service
+@RequiredArgsConstructor
+public class NotifyService {
+
+    private final MailService mailService;
+
+    /** HTML 模板异步发送 */
+    public void welcome(String to, String name) {
+        MailRequest req = MailRequest.builder()
+                .to(List.of(to))
+                .subject("欢迎加入 Molly")
+                .template("welcome")                        // classpath:/templates/mail/welcome.html
+                .templateVariables(Map.of("name", name))
+                .html(true)
+                .build();
+        mailService.sendAsync(req);                         // 立即返回 CompletableFuture
+    }
+
+    /** 带附件的同步发送（含重试） */
+    public void sendReport(String to, File report) {
+        MailRequest req = MailRequest.builder()
+                .to(List.of(to))
+                .subject("月度报表")
+                .content("请查收附件。")
+                .attachments(List.of(
+                        new MailRequest.Attachment("report.xlsx", report)
+                ))
+                .build();
+        mailService.send(req);                              // 同步 + backoff 重试
+    }
+}
+```
+
+#### 7. 验证
+
+在示例模块 `molly-document-example` 提供了 4 个演示端点，启动后（`mvn spring-boot:run -pl molly-document-example`）：
+
+```bash
+# Word：模板渲染（需先将 contract.docx 放入 src/main/resources/templates/word/）
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"name":"张三","amount":"￥99.00"}' \
+  http://localhost:8081/doc/word/contract.docx -o contract.docx
+
+# Excel：注解驱动导出
+curl http://localhost:8081/doc/excel/orders -o orders.xlsx
+
+# PDF：表单填充（需先将带 AcroForm 的 invoice.pdf 放入 templates/pdf/）
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"invoiceNo":"INV-001","customer":"张三","amount":"199.90"}' \
+  http://localhost:8081/doc/pdf/invoice.pdf -o invoice.pdf
+
+# Email：异步发送（需调通 spring.mail.*）
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"to":"user@example.com","name":"张三"}' \
+  http://localhost:8081/doc/mail/demo
+```
+
+#### 8. 扩展与覆盖
+
+- **定制 TemplateLoader**：依赖远程 / OSS 模板时，声明同名 Bean（`wordTemplateLoader` / `pdfTemplateLoader`）覆盖默认
+- **自定义 CellConverter**：在 `ConverterRegistry` Bean 上 `register(type, converter)`，或在字段上用 `@ExcelConverter(xxx.class)` 局部指定
+- **替换异步线程池**：提供 `@Bean(name = "mollyMailAsyncExecutor") Executor` 即可覆盖，方便对接业务统一的 `ThreadPoolTaskExecutor`
+- **替换模板引擎**：未引入 Thymeleaf 时 `MailService` 自动降级为 `${var}` 替换；引入后默认使用 Thymeleaf
+
+---
+
 ## 构建与运行
 
 ```bash
@@ -864,12 +1257,16 @@ mvn clean install -pl molly-auth-server-spring-boot-starter -am
 mvn clean install -pl molly-authorization-spring-boot-starter -am
 mvn clean install -pl molly-oss-spring-boot-starter -am
 mvn clean install -pl molly-cache-spring-boot-starter -am
+mvn clean install -pl molly-document-spring-boot-starter -am
 
 # 运行示例认证服务器（端口 9000）
 mvn spring-boot:run -pl molly-auth-server-example
 
 # 运行示例资源服务器（端口 9100，需认证服务器先启动）
 mvn spring-boot:run -pl molly-resource-server-example
+
+# 运行示例文档应用（端口 8081）
+mvn spring-boot:run -pl molly-document-example
 ```
 
 ## 许可证

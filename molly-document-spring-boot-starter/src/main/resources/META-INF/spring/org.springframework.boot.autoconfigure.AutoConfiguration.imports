@@ -1,0 +1,5 @@
+cn.molly.document.config.MollyDocumentAutoConfiguration
+cn.molly.document.config.MollyWordAutoConfiguration
+cn.molly.document.config.MollyExcelAutoConfiguration
+cn.molly.document.config.MollyPdfAutoConfiguration
+cn.molly.document.config.MollyEmailAutoConfiguration
