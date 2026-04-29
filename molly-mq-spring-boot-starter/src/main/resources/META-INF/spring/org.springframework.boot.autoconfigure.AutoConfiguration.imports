@@ -1,0 +1,8 @@
+cn.molly.mq.config.MollyMqAutoConfiguration
+cn.molly.mq.config.MollyMqReliabilityAutoConfiguration
+cn.molly.mq.config.MollyMqConsumerAutoConfiguration
+cn.molly.mq.config.MollyMqObservabilityAutoConfiguration
+cn.molly.mq.config.provider.MollyMqRocketProviderAutoConfiguration
+cn.molly.mq.config.provider.MollyMqKafkaProviderAutoConfiguration
+cn.molly.mq.config.provider.MollyMqPulsarProviderAutoConfiguration
+cn.molly.mq.config.provider.MollyMqRabbitProviderAutoConfiguration

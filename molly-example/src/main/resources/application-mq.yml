@@ -1,0 +1,48 @@
+# mq profile：molly-mq Starter 演示
+# 启动：mvn spring-boot:run -pl molly-example -Dspring-boot.run.profiles=mq
+# 先本地启动 RocketMQ（nameserver + broker），或修改 molly.mq.provider 切换其他 Broker
+server:
+  port: 8082
+
+spring:
+  # 排除无关 starter 的自动配置，避免无对应配置时启动失败
+  autoconfigure:
+    exclude:
+      - cn.molly.security.auth.config.MollyAuthServerAutoConfiguration
+      - cn.molly.security.authorization.config.MollyAuthorizationAutoConfiguration
+      - cn.molly.security.authorization.config.MollyResourceServerConfiguration
+      - cn.molly.security.authorization.config.MollyRbacConfiguration
+      - cn.molly.security.authorization.config.MollyAuthorizationExceptionConfiguration
+
+molly:
+  mq:
+    enabled: true
+    provider: rocketmq
+    producer:
+      group: molly-example-producer
+      send-timeout: 3s
+      retry-times: 2
+    consumer:
+      group: molly-example-consumer
+      concurrency: 4
+      max-retries: 16
+      idempotency-store: local
+      idempotency-ttl: 1h
+    reliability:
+      # 需要配合 DataSource 建表；默认关闭，示例中不启用 outbox
+      outbox-enabled: false
+    observability:
+      metric-prefix: molly.mq
+      endpoint-enabled: true
+    rocketmq:
+      name-server: localhost:9876
+      vip-channel-enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,mollymq,metrics
+  endpoint:
+    health:
+      show-details: always

@@ -1239,6 +1239,177 @@ curl -X POST -H "Content-Type: application/json" \
 
 ---
 
+## molly-mq-spring-boot-starter
+
+### 用途
+
+面向分布式系统的统一消息队列 Starter：一套抽象接口屏蔽四种主流 Broker（RocketMQ / Kafka / Pulsar / RabbitMQ）差异，内置**本地消息表事务消息**保证可靠性、**sharding key 分区路由**保证顺序性、**幂等 + 重试 + DLQ**保证消费健壮性，开箱对接 Micrometer / Actuator 实现可观测。
+
+- **默认 Provider**：RocketMQ（`molly.mq.provider=rocketmq`），切换 `kafka` / `pulsar` / `rabbit` 即可零代码迁移
+- **单 Provider 语义**：通过 `molly.mq.provider` 二选一激活，避免多 Broker 误装配
+- **零侵入接入**：`@MollyMessageListener` 注解消费 + `ProducerOperations` 编程式发送双栈
+
+### 设计思路
+
+#### 1. 分层架构
+
+```
+cn.molly.mq
+├── core/            # Message / SendResult / ConsumeResult / ProducerOperations / MessageListener / MessageConverter + 异常族
+├── provider/        # rocketmq / kafka / pulsar / rabbit 四个 Provider 适配实现
+├── reliability/     # 本地消息表 outbox：JdbcOutboxStore + OutboxFlusher + @MollyTransactionalMessage
+├── consumer/        # @MollyMessageListener + BeanPostProcessor + ContainerRegistry + ListenerDispatcher
+│   ├── idempotency/ # IdempotencyStore SPI + LocalIdempotencyStore(Caffeine) + NoOpIdempotencyStore
+│   ├── retry/       # ExponentialBackoffRetryPolicy
+│   └── dlq/         # DlqDispatcher（超过 maxRetries 自动投 {topic}-DLQ）
+├── observability/   # MollyMqMetrics + HealthIndicator + /actuator/mollymq
+├── properties/      # MollyMqProperties（molly.mq.*）
+└── config/          # 8 个 AutoConfiguration（主 / Reliability / Consumer / Observability + 4 Provider）
+```
+
+#### 2. 统一抽象
+
+| 类型 | 职责 |
+|------|------|
+| `Message<T>` | 通用消息模型：topic / tag / bizKey / shardingKey / deliveryTimeMs / idempotencyKey / headers / payload |
+| `ProducerOperations` | 发送门面：`send` / `sendAsync` / `sendOneWay` / `sendTransactional` |
+| `MessageListener<T>` | 消费者 FunctionalInterface，返回 `SUCCESS` / `RETRY` / `REJECT` |
+| `MessageConverter` | payload 序列化 SPI，默认 Jackson，自动识别 byte[] / String 特化 |
+| `MessageListenerContainerFactory` | Provider 侧消费容器工厂 SPI（每个 Provider 一个实现） |
+
+#### 3. 可靠性：本地消息表 Outbox
+
+`sendTransactional` 在业务 `@Transactional` 内调用，消息先写 `mq_outbox` 表；事务 `afterCommit` 触发 `OutboxFlusher.triggerImmediate()` 异步投递，同时 `ScheduledExecutorService` 周期扫描补偿：
+
+- **原子抢占**：`UPDATE ... WHERE id=? AND attempts=?` 版本号 CAS，避免多节点重复投递
+- **指数退避**：失败按 `retryInitialBackoff → retryMaxBackoff` 翻倍延迟
+- **终止条件**：投递次数超过 `reliability.max-attempts` 标记 DEAD，停止重试
+- **DDL**：随 jar 内置 `sql/molly-mq-outbox.sql`，`molly.mq.reliability.table-name` 可覆盖表名
+
+#### 4. 顺序性：Sharding Key 分区路由
+
+- **RocketMQ**：`MessageQueueSelector` 按 `shardingKey.hashCode() % queues` 路由到固定队列
+- **Kafka**：`ProducerRecord.key = shardingKey`，Kafka 默认按 key hash 分区
+- **Pulsar**：`TypedMessageBuilder.key(shardingKey)` + 订阅端使用 `Key_Shared` 订阅
+- **RabbitMQ**：`routingKey = shardingKey`，配合 `x-consistent-hash-exchange` 扩展
+
+#### 5. 幂等 + 重试 + DLQ
+
+`ListenerDispatcher` 在 Provider Container 回调内统一路由：
+
+1. **幂等判定**：解析 `idempotencyKey → bizKey → messageId`，通过 `IdempotencyStore.tryAcquire()` 占坑
+2. **执行 listener**：SUCCESS 直接 ack；RETRY 释放幂等锁由 Broker 重投
+3. **死信转移**：`deliveryCount > maxRetries` 或 REJECT 时，投 `{topic}-DLQ` 并 ack 原消息
+
+默认 `LocalIdempotencyStore` 基于 Caffeine（TTL 24h），单机低可靠；生产替换 Redis 实现覆盖 `IdempotencyStore` Bean 即可。
+
+#### 6. 消费双栈
+
+- **注解式**（推荐）：在 `MessageListener` 实现类上加 `@MollyMessageListener(topic, tag, group, ordered, concurrency, payloadType)`，BeanPostProcessor 自动扫描并创建容器
+- **编程式**：直接注入 `MessageListenerContainerFactory` + `MessageListenerContainerRegistry`，调用 `factory.create(endpoint)` 后 `registry.register()`
+
+#### 7. 可观测
+
+- **Micrometer 指标**：`molly.mq.consume.count{provider,topic,status}`、`molly.mq.consume.latency`、`molly.mq.produce.count`
+- **HealthIndicator**：`/actuator/health` 显示当前 Provider、消费容器总数与未运行列表
+- **Actuator Endpoint**：`/actuator/mollymq` 导出 Provider / Consumer / Reliability / 配置快照
+
+### 关键配置
+
+配置前缀 `molly.mq`：
+
+| 属性 | 默认值 | 说明 |
+|------|--------|------|
+| `molly.mq.enabled` | `true` | 全局开关 |
+| `molly.mq.provider` | `rocketmq` | 激活 Provider：`rocketmq` / `kafka` / `pulsar` / `rabbit` |
+| `molly.mq.producer.group` | `molly-mq-producer` | 生产者分组 |
+| `molly.mq.producer.send-timeout` | `3s` | 同步发送超时 |
+| `molly.mq.consumer.group` | `molly-mq-consumer` | 消费者分组 |
+| `molly.mq.consumer.concurrency` | `4` | 并发度（顺序消费忽略） |
+| `molly.mq.consumer.max-retries` | `16` | 超出后投 DLQ |
+| `molly.mq.consumer.idempotency-store` | `local` | `local` / `none`，生产建议覆盖为 Redis 实现 |
+| `molly.mq.consumer.dlq-suffix` | `-DLQ` | 死信 topic 后缀 |
+| `molly.mq.reliability.outbox-enabled` | `false` | 开启本地消息表事务消息 |
+| `molly.mq.reliability.scan-interval` | `5s` | Outbox 扫描周期 |
+| `molly.mq.reliability.max-attempts` | `32` | Outbox 最大投递次数 |
+| `molly.mq.observability.endpoint-enabled` | `true` | 暴露 `/actuator/mollymq` |
+| `molly.mq.rocketmq.name-server` | `localhost:9876` | RocketMQ NameServer |
+| `molly.mq.kafka.bootstrap-servers` | `localhost:9092` | Kafka bootstrap |
+| `molly.mq.pulsar.service-url` | `pulsar://localhost:6650` | Pulsar serviceUrl |
+| `molly.mq.rabbit.host` / `port` | `localhost` / `5672` | RabbitMQ 连接 |
+
+### 快速上手
+
+**发送：**
+
+```java
+@Autowired
+private ProducerOperations producer;
+
+// 普通发送
+producer.send(Message.of("demo-topic", "hello".getBytes()));
+
+// 顺序发送（同 shardingKey 路由到同队列）
+producer.send(Message.ordered("order-topic", "ORDER-001", payload));
+
+// 事务化发送（需 molly.mq.reliability.outbox-enabled=true，必须在 @Transactional 内）
+@Transactional
+public void createOrder(Order order) {
+    orderRepository.save(order);
+    producer.sendTransactional(Message.of("order-created", order.toJson().getBytes()));
+}
+```
+
+**消费（注解式）：**
+
+```java
+@Component
+@MollyMessageListener(topic = "demo-topic", group = "demo-consumer")
+public class DemoListener implements MessageListener<byte[]> {
+    @Override
+    public ConsumeResult onMessage(Message<byte[]> message, ConsumeContext context) {
+        log.info("received: {}", new String(message.getPayload()));
+        return ConsumeResult.SUCCESS;
+    }
+}
+```
+
+### 扩展点
+
+- **覆盖 Provider**：`@ConditionalOnMissingBean(ProducerOperations.class)`，自定义实现即可替换
+- **自定义 MessageConverter**：声明 `@Bean MessageConverter` 覆盖默认 Jackson（例如 Protobuf / Avro）
+- **分布式幂等**：提供 `IdempotencyStore` Bean（Redis / 数据库）替换默认 Caffeine
+- **自定义 Outbox 存储**：实现 `OutboxStore` 接口（例如接入 MongoDB / 其他 KV）
+- **新增 Provider**：实现 `ProducerOperations` + `MessageListenerContainerFactory`，通过 `@AutoConfiguration + @ConditionalOnProperty(provider=xxx)` 装配
+
+### 示例（molly-example）
+
+启动前先在本地准备 RocketMQ NameServer + Broker（`localhost:9876`），或切换 `molly.mq.provider`：
+
+```bash
+mvn spring-boot:run -pl molly-example -Dspring-boot.run.profiles=mq
+```
+
+验证：
+
+```bash
+# 发送
+curl 'http://localhost:8082/mq/send?topic=demo-topic&msg=hello'
+
+# 顺序发送
+curl 'http://localhost:8082/mq/send-ordered?topic=demo-order&shardingKey=ORDER-001&msg=step1'
+
+# 查看 Endpoint 快照
+curl http://localhost:8082/actuator/mollymq
+
+# 查看健康
+curl http://localhost:8082/actuator/health
+```
+
+控制台将打印 `[example][mq] received topic=... body=hello`。
+
+---
+
 ## molly-example
 
 ### 用途
@@ -1250,6 +1421,7 @@ curl -X POST -H "Content-Type: application/json" \
 | `auth` | 9000 | OAuth2/OIDC 授权服务器 | `/.well-known/openid-configuration`、`/oauth2/jwks`、`/oauth2/token` |
 | `resource` | 9100 | 资源服务器 + RBAC | `/api/users`、`/api/users/{id}`、`/api/users/export` |
 | `document` | 8081 | Word / Excel / PDF / Email | `/doc/word/contract.docx`、`/doc/excel/orders`、`/doc/pdf/invoice.pdf`、`/doc/mail/demo` |
+| `mq` | 8082 | RocketMQ / Kafka / Pulsar / Rabbit 消息队列 | `/mq/send`、`/mq/send-ordered`、`/actuator/mollymq` |
 
 ### 设计思路
 
